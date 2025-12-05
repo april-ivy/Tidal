@@ -10,6 +10,38 @@ use crate::core::auth::CLIENT_TOKEN;
 
 const API_BASE: &str = "https://api.tidal.com/v1";
 const LISTEN_API_BASE: &str = "https://listen.tidal.com/v1";
+const IMAGE_BASE: &str = "https://resources.tidal.com/images";
+
+pub fn image_url(uuid: &str, size: ImageSize) -> String {
+    let path: String = uuid
+        .chars()
+        .filter(|c| *c != '-')
+        .collect::<Vec<_>>()
+        .chunks(4)
+        .map(|c| c.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join("/");
+    format!("{}/{}/{}.jpg", IMAGE_BASE, path, size.as_str())
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ImageSize {
+    Small,
+    Medium,
+    Large,
+    XLarge,
+}
+
+impl ImageSize {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ImageSize::Small => "160x160",
+            ImageSize::Medium => "320x320",
+            ImageSize::Large => "640x640",
+            ImageSize::XLarge => "1280x1280",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionInfo {
@@ -53,6 +85,7 @@ pub struct Artist {
     pub url: Option<String>,
     #[serde(rename = "artistTypes")]
     pub artist_types: Option<Vec<String>>,
+    pub picture: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -98,6 +131,7 @@ pub struct Album {
     #[serde(rename = "type")]
     pub album_type: Option<String>,
     pub version: Option<String>,
+    pub cover: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -181,6 +215,9 @@ pub struct Playlist {
     pub popularity: Option<u32>,
     #[serde(rename = "type")]
     pub playlist_type: Option<String>,
+    pub image: Option<String>,
+    #[serde(rename = "squareImage")]
+    pub square_image: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1381,6 +1418,12 @@ pub fn parse_mpd(mpd_string: &str) -> AppResult<DashManifest> {
     })
 }
 
+impl Artist {
+    pub fn picture_url(&self, size: ImageSize) -> Option<String> {
+        self.picture.as_ref().map(|uuid| image_url(uuid, size))
+    }
+}
+
 impl Track {
     pub fn display_title(&self) -> String {
         let artists = self
@@ -1401,6 +1444,10 @@ impl Track {
         let secs = self.duration % 60;
         format!("{}:{:02}", mins, secs)
     }
+
+    pub fn cover_url(&self, size: ImageSize) -> Option<String> {
+        self.album.as_ref().and_then(|a| a.cover_url(size))
+    }
 }
 
 impl Album {
@@ -1417,6 +1464,10 @@ impl Album {
             format!("{}:{:02}", mins, secs)
         })
     }
+
+    pub fn cover_url(&self, size: ImageSize) -> Option<String> {
+        self.cover.as_ref().map(|uuid| image_url(uuid, size))
+    }
 }
 
 impl Playlist {
@@ -1426,6 +1477,13 @@ impl Playlist {
             let secs = d % 60;
             format!("{}:{:02}", mins, secs)
         })
+    }
+
+    pub fn image_url(&self, size: ImageSize) -> Option<String> {
+        self.square_image
+            .as_ref()
+            .or(self.image.as_ref())
+            .map(|uuid| image_url(uuid, size))
     }
 }
 
@@ -1444,5 +1502,9 @@ impl Video {
         let mins = self.duration / 60;
         let secs = self.duration % 60;
         format!("{}:{:02}", mins, secs)
+    }
+
+    pub fn cover_url(&self, size: ImageSize) -> Option<String> {
+        self.album.as_ref().and_then(|a| a.cover_url(size))
     }
 }
