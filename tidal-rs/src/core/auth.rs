@@ -21,13 +21,13 @@ pub struct Credentials {
     pub country_code: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AuthSession {
     pub client_unique_key: String,
     client: reqwest::Client,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct DeviceAuthResponse {
     #[serde(rename = "deviceCode")]
     pub device_code: String,
@@ -42,7 +42,7 @@ pub struct DeviceAuthResponse {
     pub interval: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: String,
