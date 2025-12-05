@@ -13,14 +13,8 @@ const LISTEN_API_BASE: &str = "https://listen.tidal.com/v1";
 const IMAGE_BASE: &str = "https://resources.tidal.com/images";
 
 pub fn image_url(uuid: &str, size: ImageSize) -> String {
-    let path: String = uuid
-        .chars()
-        .filter(|c| *c != '-')
-        .collect::<Vec<_>>()
-        .chunks(4)
-        .map(|c| c.iter().collect::<String>())
-        .collect::<Vec<_>>()
-        .join("/");
+    let path = uuid.replace('-', "/");
+    
     format!("{}/{}/{}.jpg", IMAGE_BASE, path, size.as_str())
 }
 
