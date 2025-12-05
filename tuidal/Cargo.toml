@@ -1,0 +1,8 @@
+[package]
+name = "tuidal"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tidal = { path = "../tidal-rs" }
+tokio = { version = "1.48.0", features = ["full"] }

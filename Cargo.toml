@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "tidal-rs",
+    "tidal-dl",
+    "tuidal",
+]
+resolver = "2"
