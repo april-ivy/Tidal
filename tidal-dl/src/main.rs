@@ -25,6 +25,7 @@ use termcolor::{
 use tidal::{
     AudioQuality,
     AuthSession,
+    Playlist,
     TidalClient,
     Track,
 };
@@ -240,26 +241,28 @@ async fn get_client(console: &mut Console) -> AppResult<TidalClient> {
     }
 }
 
-fn parse_tidal_link(link: &str) -> AppResult<(String, u64)> {
-    // https://tidal.com/browse/track/12345678
-    // https://listen.tidal.com/track/12345678
-    // https://tidal.com/track/12345678
-    // tidal.com/browse/track/12345678
-
+fn parse_tidal_link(link: &str) -> AppResult<(String, String)> {
     if let Ok(id) = link.parse::<u64>() {
-        return Ok(("track".to_string(), id));
+        return Ok(("track".to_string(), id.to_string()));
     }
 
     let track_re = Regex::new(r"(?:tidal\.com|listen\.tidal\.com)(?:/browse)?/track/(\d+)")?;
     if let Some(caps) = track_re.captures(link) {
-        let id: u64 = caps.get(1).unwrap().as_str().parse()?;
+        let id = caps.get(1).unwrap().as_str().to_string();
         return Ok(("track".to_string(), id));
     }
 
     let album_re = Regex::new(r"(?:tidal\.com|listen\.tidal\.com)(?:/browse)?/album/(\d+)")?;
     if let Some(caps) = album_re.captures(link) {
-        let id: u64 = caps.get(1).unwrap().as_str().parse()?;
+        let id = caps.get(1).unwrap().as_str().to_string();
         return Ok(("album".to_string(), id));
+    }
+
+    let playlist_re =
+        Regex::new(r"(?:tidal\.com|listen\.tidal\.com)(?:/browse)?/playlist/([a-f0-9-]+)")?;
+    if let Some(caps) = playlist_re.captures(link) {
+        let id = caps.get(1).unwrap().as_str().to_string();
+        return Ok(("playlist".to_string(), id));
     }
 
     Err(format!("Could not parse Tidal link: {}", link).into())
@@ -452,6 +455,75 @@ async fn download_album(
     Ok(())
 }
 
+async fn download_playlist(
+    client: &TidalClient,
+    playlist: &Playlist,
+    output_dir: &PathBuf,
+    console: &mut Console,
+    download_lyrics_flag: bool,
+) -> AppResult<()> {
+    let creator_name = playlist
+        .creator
+        .as_ref()
+        .and_then(|c| c.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    console.println("");
+    console.println("Playlist Download");
+    console.println(&format!("Playlist: {}", playlist.title));
+    console.println(&format!("Creator:  {}", creator_name));
+    console.println(&format!(
+        "Tracks:   {}",
+        playlist.number_of_tracks.unwrap_or(0)
+    ));
+
+    let playlist_folder = output_dir.join(sanitize_filename(&playlist.title));
+    tokio::fs::create_dir_all(&playlist_folder).await?;
+
+    let mut offset = 0u32;
+    let limit = 100u32;
+    let mut track_num = 0usize;
+    let total = playlist.number_of_tracks.unwrap_or(0) as usize;
+
+    loop {
+        let page = client
+            .get_playlist_tracks(&playlist.uuid, limit, offset)
+            .await?;
+        if page.items.is_empty() {
+            break;
+        }
+
+        for playlist_item in &page.items {
+            track_num += 1;
+            console.println("");
+            console.println(&format!("[{}/{}]", track_num, total));
+            if let Err(e) = download_track(
+                client,
+                &playlist_item.item,
+                &playlist_folder,
+                console,
+                download_lyrics_flag,
+            )
+            .await
+            {
+                console.error(&format!("Failed to download: {}", e));
+            }
+        }
+
+        offset += limit;
+        if page.items.len() < limit as usize {
+            break;
+        }
+    }
+
+    console.println("");
+    console.success("Playlist download complete.");
+    console.print("  Location: ");
+    console.println_colored(&playlist_folder.display().to_string(), Color::Cyan);
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> AppResult<()> {
     let args = Args::parse();
@@ -469,11 +541,17 @@ async fn main() -> AppResult<()> {
 
     match content_type.as_str() {
         "track" => {
-            let track = client.get_track(id).await?;
+            let track_id: u64 = id.parse()?;
+            let track = client.get_track(track_id).await?;
             download_track(&client, &track, &output_dir, &mut console, args.lyrics).await?;
         }
         "album" => {
-            download_album(&client, id, &output_dir, &mut console, args.lyrics).await?;
+            let album_id: u64 = id.parse()?;
+            download_album(&client, album_id, &output_dir, &mut console, args.lyrics).await?;
+        }
+        "playlist" => {
+            let playlist = client.get_playlist(&id).await?;
+            download_playlist(&client, &playlist, &output_dir, &mut console, args.lyrics).await?;
         }
         _ => {
             return Err(format!("Unsupported content type: {}", content_type).into());
