@@ -403,7 +403,9 @@ pub struct FolderItem {
     pub data: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone)]
 pub struct TidalClient {
+    #[allow(dead_code)]
     client: reqwest::Client,
     pub access_token: String,
     pub refresh_token: String,
