@@ -3,9 +3,12 @@ name = "tidal"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["lib", "cdylib"]
+
 [dependencies]
 reqwest = { version = "0.12.24", features = ["json", "gzip", "stream"] }
-tokio = { version = "1.48.0", features = ["time", "fs", "io-util"] }
+tokio = { version = "1.48.0", features = ["time", "fs", "io-util", "rt-multi-thread"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 base64 = "0.22.1"
@@ -17,3 +20,8 @@ quick-xml = "0.38.4"
 futures = "0.3.31"
 bytes = "1.11.0"
 urlencoding = "2.1.3"
+uniffi = "0.30.0"
+thiserror = "2.0.17"
+
+[build-dependencies]
+uniffi = { version = "0.30.0", features = ["build"] }

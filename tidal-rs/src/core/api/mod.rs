@@ -3,7 +3,7 @@ mod artists;
 mod client;
 mod discovery;
 mod favorites;
-mod models;
+pub(crate) mod models;
 mod playback;
 mod playlists;
 mod search;
