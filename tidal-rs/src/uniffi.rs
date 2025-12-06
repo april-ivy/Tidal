@@ -8,41 +8,41 @@ use crate::core::stream::AudioQuality;
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum TidalUniFFIError {
-    #[error("API error {status}: {message}")]
-    Api { status: u16, message: String },
-    #[error("Authentication failed: {message}")]
-    Auth { message: String },
-    #[error("Network error: {message}")]
-    Network { message: String },
-    #[error("JSON error: {message}")]
-    Json { message: String },
-    #[error("Decode error: {message}")]
-    Decode { message: String },
-    #[error("Encryption error: {message}")]
-    Encryption { message: String },
-    #[error("Manifest error: {message}")]
-    Manifest { message: String },
-    #[error("IO error: {message}")]
-    Io { message: String },
+    #[error("API error {status}: {msg}")]
+    Api { status: u16, msg: String },
+    #[error("Authentication failed: {msg}")]
+    Auth { msg: String },
+    #[error("Network error: {msg}")]
+    Network { msg: String },
+    #[error("JSON error: {msg}")]
+    Json { msg: String },
+    #[error("Decode error: {msg}")]
+    Decode { msg: String },
+    #[error("Encryption error: {msg}")]
+    Encryption { msg: String },
+    #[error("Manifest error: {msg}")]
+    Manifest { msg: String },
+    #[error("IO error: {msg}")]
+    Io { msg: String },
 }
 
 impl From<TidalError> for TidalUniFFIError {
     fn from(err: TidalError) -> Self {
         match err {
-            TidalError::Api { status, message } => TidalUniFFIError::Api { status, message },
-            TidalError::Auth(msg) => TidalUniFFIError::Auth { message: msg },
+            TidalError::Api { status, message } => TidalUniFFIError::Api { status, msg: message },
+            TidalError::Auth(m) => TidalUniFFIError::Auth { msg: m },
             TidalError::Network(e) => TidalUniFFIError::Network {
-                message: e.to_string(),
+                msg: e.to_string(),
             },
             TidalError::Json(e) => TidalUniFFIError::Json {
-                message: e.to_string(),
+                msg: e.to_string(),
             },
-            TidalError::Decode(msg) => TidalUniFFIError::Decode { message: msg },
-            TidalError::Encryption(msg) => TidalUniFFIError::Encryption { message: msg },
-            TidalError::Manifest(msg) => TidalUniFFIError::Manifest { message: msg },
-            TidalError::Xml(msg) => TidalUniFFIError::Decode { message: msg },
+            TidalError::Decode(m) => TidalUniFFIError::Decode { msg: m },
+            TidalError::Encryption(m) => TidalUniFFIError::Encryption { msg: m },
+            TidalError::Manifest(m) => TidalUniFFIError::Manifest { msg: m },
+            TidalError::Xml(m) => TidalUniFFIError::Decode { msg: m },
             TidalError::Io(e) => TidalUniFFIError::Io {
-                message: e.to_string(),
+                msg: e.to_string(),
             },
         }
     }
