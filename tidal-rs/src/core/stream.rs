@@ -3,7 +3,6 @@ use std::pin::Pin;
 use bytes::Bytes;
 use futures::Stream;
 
-use crate::core::AppResult;
 use crate::core::api::{
     PlaybackInfo,
     TidalClient,
@@ -11,6 +10,10 @@ use crate::core::api::{
 use crate::core::decrypt::{
     StreamDecryptor,
     decrypt_key_id,
+};
+use crate::core::error::{
+    Result,
+    TidalError,
 };
 
 #[derive(Debug, Clone)]
@@ -45,30 +48,38 @@ pub struct StreamInfo {
     pub encryption: Option<StreamDecryptor>,
 }
 
-pub type BoxedByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>;
+pub type BoxedByteStream = Pin<Box<dyn Stream<Item = Result<Bytes>> + Send>>;
 
 impl TidalClient {
     pub async fn get_stream_info(
         &self,
         track_id: u64,
         quality: AudioQuality,
-    ) -> AppResult<StreamInfo> {
+    ) -> Result<StreamInfo> {
         let playback_info = self.get_playback_info(track_id, quality.as_str()).await?;
         self.parse_stream_info(playback_info)
     }
 
-    fn parse_stream_info(&self, playback_info: PlaybackInfo) -> AppResult<StreamInfo> {
+    fn parse_stream_info(&self, playback_info: PlaybackInfo) -> Result<StreamInfo> {
         match playback_info.manifest_mime_type.as_str() {
             "application/vnd.tidal.bts" => {
                 let manifest = self.decode_bts_manifest(&playback_info)?;
                 let encryption = match manifest.encryption_type.as_str() {
                     "OLD_AES" => {
-                        let key_id = manifest.key_id.as_ref().ok_or("Missing keyId")?;
+                        let key_id = manifest
+                            .key_id
+                            .as_ref()
+                            .ok_or_else(|| TidalError::Encryption("Missing keyId".into()))?;
                         let dec_key = decrypt_key_id(key_id)?;
                         Some(StreamDecryptor::new(&dec_key))
                     }
                     "NONE" => None,
-                    other => return Err(format!("Unknown encryption: {}", other).into()),
+                    other => {
+                        return Err(TidalError::Encryption(format!(
+                            "Unknown encryption: {}",
+                            other
+                        )));
+                    }
                 };
 
                 Ok(StreamInfo {
@@ -94,11 +105,14 @@ impl TidalClient {
                     encryption: None,
                 })
             }
-            other => Err(format!("Unknown manifest type: {}", other).into()),
+            other => Err(TidalError::Manifest(format!(
+                "Unknown manifest type: {}",
+                other
+            ))),
         }
     }
 
-    pub async fn get_stream_bytes(&self, stream_info: &mut StreamInfo) -> AppResult<Vec<u8>> {
+    pub async fn get_stream_bytes(&self, stream_info: &mut StreamInfo) -> Result<Vec<u8>> {
         let client = reqwest::Client::new();
         let mut data = Vec::new();
 
@@ -121,7 +135,7 @@ impl TidalClient {
         track_id: u64,
         quality: AudioQuality,
         output_path: &str,
-    ) -> AppResult<()> {
+    ) -> Result<()> {
         use tokio::io::AsyncWriteExt;
 
         let mut stream_info = self.get_stream_info(track_id, quality).await?;

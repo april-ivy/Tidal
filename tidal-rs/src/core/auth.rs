@@ -4,7 +4,10 @@ use serde::{
 };
 use uuid::Uuid;
 
-use crate::core::AppResult;
+use crate::core::error::{
+    Result,
+    TidalError,
+};
 
 const TV_TOKEN: &str = "7m7Ap0JC9j1cOM3n";
 const TV_SECRET: &str = "vRAdA108tlvkJpTsGZS8rGZ7xTlbJ0qaZ2K9saEzsgY=";
@@ -72,7 +75,7 @@ impl AuthSession {
         }
     }
 
-    pub async fn start_device_auth(&self) -> AppResult<DeviceAuthResponse> {
+    pub async fn start_device_auth(&self) -> Result<DeviceAuthResponse> {
         let resp = self
             .client
             .post("https://auth.tidal.com/v1/oauth2/device_authorization")
@@ -84,7 +87,7 @@ impl AuthSession {
         let text = resp.text().await?;
 
         if !status.is_success() {
-            return Err(format!("device auth failed: {}", text).into());
+            return Err(TidalError::Auth(format!("device auth failed: {}", text)));
         }
 
         let mut parsed: DeviceAuthResponse = serde_json::from_str(&text)?;
@@ -96,11 +99,7 @@ impl AuthSession {
         Ok(parsed)
     }
 
-    pub async fn poll_for_token(
-        &self,
-        device_code: &str,
-        interval: u64,
-    ) -> AppResult<TokenResponse> {
+    pub async fn poll_for_token(&self, device_code: &str, interval: u64) -> Result<TokenResponse> {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
 
@@ -128,15 +127,20 @@ impl AuthSession {
                 match err.error.as_str() {
                     "authorization_pending" => continue,
                     "slow_down" => tokio::time::sleep(tokio::time::Duration::from_secs(5)).await,
-                    "expired_token" => return Err("code expired".into()),
-                    "access_denied" => return Err("access denied".into()),
-                    _ => return Err(format!("{}: {:?}", err.error, err.error_description).into()),
+                    "expired_token" => return Err(TidalError::Auth("code expired".into())),
+                    "access_denied" => return Err(TidalError::Auth("access denied".into())),
+                    _ => {
+                        return Err(TidalError::Auth(format!(
+                            "{}: {:?}",
+                            err.error, err.error_description
+                        )));
+                    }
                 }
             }
         }
     }
 
-    pub async fn refresh_token(&self, refresh_token: &str) -> AppResult<TokenResponse> {
+    pub async fn refresh_token(&self, refresh_token: &str) -> Result<TokenResponse> {
         let resp = self
             .client
             .post("https://auth.tidal.com/v1/oauth2/token")
@@ -149,7 +153,13 @@ impl AuthSession {
             .send()
             .await?;
 
+        let status = resp.status();
         let text = resp.text().await?;
+
+        if !status.is_success() {
+            return Err(TidalError::Auth(format!("refresh failed: {}", text)));
+        }
+
         Ok(serde_json::from_str(&text)?)
     }
 }

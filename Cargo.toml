@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "tidal-rs",
-    "tidal-dl",
-    "tuidal",
+    "tidal-dl"
 ]
 resolver = "2"
