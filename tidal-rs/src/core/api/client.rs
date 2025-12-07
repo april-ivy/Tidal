@@ -305,6 +305,24 @@ impl TidalClient {
         format!("{}/{}?{}", LISTEN_API_BASE, path, query)
     }
 
+    pub(crate) fn pages_url(&self, path: &str, extra_params: &[(&str, &str)]) -> String {
+    let mut params = vec![
+        ("countryCode", self.country_code.as_str()),
+        ("locale", "en_US"),
+        ("deviceType", "BROWSER"),
+    ];
+    params.extend_from_slice(extra_params);
+
+    let query = params
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+
+    let separator = if path.contains('?') { "&" } else { "?" };
+    format!("https://tidal.com/v1/pages/{}{}{}", path, separator, query)
+}
+
     pub(crate) fn suggestions_url(&self, query: &str, explicit: bool, hybrid: bool) -> String {
         format!(
             "{}/suggestions/?countryCode={}&explicit={}&hybrid={}&query={}",

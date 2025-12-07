@@ -1,5 +1,8 @@
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{
+    Path,
+    PathBuf,
+};
 use std::time::{
     SystemTime,
     UNIX_EPOCH,
@@ -10,7 +13,23 @@ use indicatif::{
     ProgressBar,
     ProgressStyle,
 };
+use lofty::config::WriteOptions;
+use lofty::picture::{
+    MimeType,
+    Picture,
+    PictureType,
+};
+use lofty::prelude::*;
+use lofty::probe::Probe;
+use lofty::tag::{
+    ItemKey,
+    ItemValue,
+    Tag,
+    TagItem,
+    TagType,
+};
 use regex::Regex;
+use reqwest::header::CONTENT_TYPE;
 use serde::{
     Deserialize,
     Serialize,
@@ -25,7 +44,9 @@ use termcolor::{
 use tidal::{
     AudioQuality,
     AuthSession,
+    ImageSize,
     Playlist,
+    StreamInfo,
     TidalClient,
     Track,
 };
@@ -44,9 +65,6 @@ struct Args {
 
     #[arg(short, long)]
     output: Option<PathBuf>,
-
-    #[arg(short, long)]
-    lyrics: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,7 +306,7 @@ async fn download_lyrics(
     track_id: u64,
     output_path: &PathBuf,
     console: &mut Console,
-) -> AppResult<bool> {
+) -> AppResult<Option<String>> {
     console.status("Fetching lyrics... ");
 
     match client.get_lyrics(track_id).await {
@@ -297,20 +315,473 @@ async fn download_lyrics(
 
             if content.is_empty() {
                 console.println_colored("not available", Color::Yellow);
-                return Ok(false);
+                return Ok(None);
             }
 
             tokio::fs::write(output_path, &content).await?;
             console.println_colored("OK", Color::Green);
             console.print("  Saved: ");
             console.println_colored(&output_path.display().to_string(), Color::Cyan);
-            Ok(true)
+            Ok(Some(content))
         }
         Err(_) => {
             console.println_colored("not available", Color::Yellow);
-            Ok(false)
+            Ok(None)
         }
     }
+}
+
+async fn fetch_cover_image(track: &Track) -> AppResult<Option<(Vec<u8>, MimeType)>> {
+    if let Some(url) = track.cover_url(ImageSize::XLarge) {
+        let resp = reqwest::get(&url).await?;
+        if !resp.status().is_success() {
+            return Ok(None);
+        }
+
+        let content_type = resp
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok().map(str::to_owned));
+        let bytes = resp.bytes().await?.to_vec();
+        let mime = content_type
+            .as_deref()
+            .and_then(|ct| {
+                if ct.contains("png") {
+                    Some(MimeType::Png)
+                } else if ct.contains("gif") {
+                    Some(MimeType::Gif)
+                } else if ct.contains("bmp") {
+                    Some(MimeType::Bmp)
+                } else if ct.contains("jpeg") || ct.contains("jpg") {
+                    Some(MimeType::Jpeg)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(MimeType::Jpeg);
+
+        return Ok(Some((bytes, mime)));
+    }
+
+    Ok(None)
+}
+
+fn build_full_title(title: &str, version: Option<&str>) -> String {
+    match version {
+        Some(v) if !v.is_empty() => format!("{} ({})", title, v),
+        _ => title.to_string(),
+    }
+}
+
+fn encode_audio_details(stream_info: &StreamInfo) -> Option<String> {
+    let mut details = Vec::new();
+
+    if let Some(rate) = stream_info.sample_rate {
+        details.push(format!("{} kHz", rate / 1000));
+    }
+
+    if let Some(depth) = stream_info.bit_depth {
+        details.push(format!("{} bit", depth));
+    }
+
+    if !stream_info.codecs.is_empty() {
+        details.push(stream_info.codecs.clone());
+    }
+
+    if details.is_empty() {
+        None
+    } else {
+        Some(details.join(" | "))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContainerKind {
+    Flac,
+    Mp4,
+}
+
+fn detect_container(data: &[u8]) -> ContainerKind {
+    if data.len() >= 4 && &data[..4] == b"fLaC" {
+        return ContainerKind::Flac;
+    }
+    if data.len() >= 8 && &data[4..8] == b"ftyp" {
+        return ContainerKind::Mp4;
+    }
+    ContainerKind::Flac
+}
+
+async fn embed_metadata(
+    client: &TidalClient,
+    output_path: &Path,
+    track: &Track,
+    full_title: &str,
+    stream_info: &StreamInfo,
+    lyrics: Option<String>,
+) -> AppResult<()> {
+    let ext = output_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    let tag_type = if ext == "flac" {
+        TagType::VorbisComments
+    } else {
+        TagType::Mp4Ilst
+    };
+
+    let mut tagged_file = Probe::open(output_path)?.read()?;
+    if tagged_file.tag(tag_type).is_none() {
+        tagged_file.insert_tag(Tag::new(tag_type));
+    }
+
+    let tag = tagged_file
+        .tag_mut(tag_type)
+        .ok_or_else(|| "Failed to get tag".to_string())?;
+
+    let artists_joined = track
+        .artists
+        .iter()
+        .map(|a| a.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    tag.set_title(full_title.to_string());
+    tag.set_artist(artists_joined.clone());
+
+    if let Some(version) = track.version.as_ref() {
+        tag.insert_text(ItemKey::TrackSubtitle, version.clone());
+    }
+
+    if let Some(album) = &track.album {
+        if let Some(album_artist) = album.primary_artist() {
+            tag.insert_text(ItemKey::AlbumArtist, album_artist.name.clone());
+        } else if let Some(primary) = track.primary_artist() {
+            tag.insert_text(ItemKey::AlbumArtist, primary.name.clone());
+        } else {
+            tag.insert_text(ItemKey::AlbumArtist, artists_joined.clone());
+        }
+    } else if let Some(primary) = track.primary_artist() {
+        tag.insert_text(ItemKey::AlbumArtist, primary.name.clone());
+    } else {
+        tag.insert_text(ItemKey::AlbumArtist, artists_joined.clone());
+    }
+
+    tag.insert_text(ItemKey::Performer, artists_joined.clone());
+    tag.insert_text(ItemKey::OriginalArtist, artists_joined.clone());
+
+    if let Some(primary) = track.primary_artist() {
+        tag.insert_text(ItemKey::Composer, primary.name.clone());
+    } else {
+        tag.insert_text(ItemKey::Composer, artists_joined.clone());
+    }
+
+    for artist in &track.artists {
+        tag.push(TagItem::new(
+            ItemKey::TrackArtists,
+            ItemValue::Text(artist.name.clone()),
+        ));
+    }
+
+    if let Some(tags) = track
+        .media_metadata
+        .as_ref()
+        .and_then(|m| m.tags.as_ref())
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            track
+                .album
+                .as_ref()
+                .and_then(|a| a.media_metadata.as_ref())
+                .and_then(|m| m.tags.as_ref())
+                .filter(|v| !v.is_empty())
+        })
+    {
+        let genres = tags.join(", ");
+        tag.insert_text(ItemKey::Genre, genres);
+    }
+
+    let date_to_use = track
+        .album
+        .as_ref()
+        .and_then(|a| a.release_date.as_ref().or(a.stream_start_date.as_ref()))
+        .or(track.stream_start_date.as_ref());
+
+    if let Some(date) = date_to_use {
+        if let Some(year_str) = date.split('-').next() {
+            if let Ok(y) = year_str.parse::<u32>() {
+                tag.set_year(y);
+                tag.insert_text(ItemKey::Year, year_str.to_string());
+
+                let date_only = date.split('T').next().unwrap_or(date);
+                tag.insert_text(ItemKey::RecordingDate, date_only.to_string());
+                tag.insert_text(ItemKey::ReleaseDate, date_only.to_string());
+                tag.insert_text(ItemKey::OriginalReleaseDate, date_only.to_string());
+            }
+        }
+    }
+
+    if let Some(album) = &track.album {
+        tag.set_album(album.title.clone());
+
+        match client.get_album(album.id).await {
+            Ok(full_album) => {
+                if let Some(total) = full_album.number_of_tracks {
+                    tag.set_track_total(total);
+                }
+
+                if let Some(vol_total) = full_album.number_of_volumes {
+                    tag.set_disk_total(vol_total);
+                }
+            }
+            Err(_) => {
+                if let Some(total) = album.number_of_tracks {
+                    tag.set_track_total(total);
+                }
+
+                if let Some(vol_total) = album.number_of_volumes {
+                    tag.set_disk_total(vol_total);
+                }
+            }
+        }
+
+        if let Some(upc) = album.upc.clone() {
+            tag.insert_text(ItemKey::CatalogNumber, upc.clone());
+            tag.insert_text(ItemKey::Barcode, upc);
+        }
+
+        if let Some(album_type) = album.album_type.as_ref() {
+            tag.insert_text(ItemKey::OriginalMediaType, album_type.clone());
+        }
+    }
+
+    if let Some(n) = track.track_number {
+        tag.set_track(n);
+    }
+
+    if let Some(disc) = track.volume_number {
+        tag.set_disk(disc);
+    }
+
+    if let Some(isrc) = track.isrc.clone() {
+        tag.insert_text(ItemKey::Isrc, isrc);
+    }
+
+    if let Some(url) = track.url.as_ref() {
+        tag.insert_text(ItemKey::AudioSourceUrl, url.clone());
+    }
+
+    if track.explicit {
+        tag.insert_text(ItemKey::ParentalAdvisory, "Explicit".to_string());
+    }
+
+    if let Some(gain) = track.replay_gain {
+        tag.insert_text(ItemKey::ReplayGainTrackGain, format!("{gain:.2} dB"));
+    }
+
+    if let Some(peak) = track.peak {
+        tag.insert_text(ItemKey::ReplayGainTrackPeak, format!("{peak:.6}"));
+    }
+
+    let mut encoder_info_parts = Vec::new();
+
+    if let Some(quality) = track
+        .audio_quality
+        .as_ref()
+        .or_else(|| track.album.as_ref().and_then(|a| a.audio_quality.as_ref()))
+    {
+        encoder_info_parts.push(format!("Tidal {}", quality));
+    }
+
+    if let Some(details) = encode_audio_details(stream_info) {
+        encoder_info_parts.push(details);
+    }
+
+    if let Some(modes) = track.audio_modes.as_ref() {
+        if !modes.is_empty() {
+            encoder_info_parts.push(format!("Modes: {}", modes.join(", ")));
+        }
+    }
+
+    if !encoder_info_parts.is_empty() {
+        tag.insert_text(ItemKey::EncoderSettings, encoder_info_parts.join(" | "));
+    }
+
+    tag.insert_text(ItemKey::EncoderSoftware, "Tidal".to_string());
+
+    if let Some(media_tags) = track
+        .media_metadata
+        .as_ref()
+        .and_then(|m| m.tags.as_ref())
+        .filter(|t| !t.is_empty())
+    {
+        let tags_str = media_tags.join(", ");
+        tag.insert_text(ItemKey::Description, format!("Quality: {}", tags_str));
+    }
+
+    if let Some(popularity) = track.popularity {
+        tag.insert_text(ItemKey::Popularimeter, popularity.to_string());
+    }
+
+    if let Some(c) = track
+        .copyright
+        .clone()
+        .or_else(|| track.album.as_ref().and_then(|a| a.copyright.clone()))
+    {
+        tag.insert_text(ItemKey::CopyrightMessage, c);
+    }
+
+    if let Some(album) = &track.album {
+        if let Some(label_artist) = album.artist.as_ref() {
+            tag.insert_text(ItemKey::Label, label_artist.name.clone());
+            tag.insert_text(ItemKey::Publisher, label_artist.name.clone());
+        }
+    }
+
+    tag.insert_text(ItemKey::EncodedBy, "Tidal".to_string());
+
+    if let Some(key) = track.musical_key_formatted() {
+        tag.insert_text(ItemKey::InitialKey, key);
+    }
+
+    if let Some(bpm) = track.bpm {
+        tag.insert_text(ItemKey::Bpm, bpm.to_string());
+        tag.insert_text(ItemKey::IntegerBpm, bpm.to_string());
+    }
+
+    let mut comment_parts = Vec::new();
+
+    if let Some(popularity) = track.popularity {
+        comment_parts.push(format!("Popularity: {}/100", popularity));
+    }
+
+    if track.stream_ready == Some(true) {
+        if let Some(start_date) = track.stream_start_date.as_ref() {
+            if let Some(date_only) = start_date.split('T').next() {
+                comment_parts.push(format!("Available since: {}", date_only));
+            }
+        }
+    }
+
+    comment_parts.push(format!("Tidal ID: {}", track.id));
+
+    if !comment_parts.is_empty() {
+        let comment = comment_parts.join(" | ");
+        if let Some(existing) = tag.get_string(&ItemKey::Comment) {
+            tag.insert_text(ItemKey::Comment, format!("{} | {}", existing, comment));
+        } else {
+            tag.insert_text(ItemKey::Comment, comment);
+        }
+    }
+
+    if let Some(text) = lyrics.clone() {
+        tag.insert_text(ItemKey::Lyrics, text);
+    }
+
+    let credits = if let Some(album) = &track.album {
+        match client.get_album_page(album.id).await {
+            Ok(album_page) => {
+                let album_credits = album_page
+                    .rows
+                    .iter()
+                    .flat_map(|row| &row.modules)
+                    .find(|module| module.module_type == "ALBUM_HEADER")
+                    .and_then(|module| module.credits.as_ref())
+                    .map(|c| &c.items);
+
+                album_credits.map(|c| c.clone())
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    if let Some(credits) = credits {
+        for credit in credits.iter() {
+            let contributors = credit
+                .contributors
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            if contributors.is_empty() {
+                continue;
+            }
+
+            let credit_type_lower = credit.credit_type.to_lowercase();
+
+            match credit_type_lower.as_str() {
+                "producer" | "producers" => {
+                    tag.insert_text(ItemKey::Producer, contributors);
+                }
+                "mixer" | "mixing" | "mix engineer" => {
+                    tag.insert_text(ItemKey::MixEngineer, contributors);
+                }
+                "engineer" | "recording engineer" | "audio engineer" => {
+                    tag.insert_text(ItemKey::Engineer, contributors);
+                }
+                "writer" | "songwriter" => {
+                    tag.insert_text(ItemKey::Writer, contributors);
+                }
+                "composer" | "composers" => {
+                    if tag.get_string(&ItemKey::Composer).is_none() {
+                        tag.insert_text(ItemKey::Composer, contributors);
+                    }
+                }
+                "lyricist" => {
+                    tag.insert_text(ItemKey::Lyricist, contributors);
+                }
+                "arranger" => {
+                    tag.insert_text(ItemKey::Arranger, contributors);
+                }
+                "conductor" => {
+                    tag.insert_text(ItemKey::Conductor, contributors);
+                }
+                "remixer" | "remix" => {
+                    tag.insert_text(ItemKey::Remixer, contributors);
+                }
+                "performer" | "performers" => {
+                    let performer_info = format!("Performers: {}", contributors);
+                    if let Some(existing_comment) = tag.get_string(&ItemKey::Comment) {
+                        tag.insert_text(
+                            ItemKey::Comment,
+                            format!("{} | {}", existing_comment, performer_info),
+                        );
+                    } else {
+                        tag.insert_text(ItemKey::Comment, performer_info);
+                    }
+                }
+                "record label" => {
+                    tag.insert_text(ItemKey::Label, contributors.clone());
+                    tag.insert_text(ItemKey::Publisher, contributors);
+                }
+                _ => {
+                    let credit_info = format!("{}: {}", credit.credit_type, contributors);
+                    if let Some(existing_comment) = tag.get_string(&ItemKey::Comment) {
+                        tag.insert_text(
+                            ItemKey::Comment,
+                            format!("{} | {}", existing_comment, credit_info),
+                        );
+                    } else {
+                        tag.insert_text(ItemKey::Comment, credit_info);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some((cover_bytes, mime)) = fetch_cover_image(track).await? {
+        let picture =
+            Picture::new_unchecked(PictureType::CoverFront, Some(mime), None, cover_bytes);
+        tag.push_picture(picture);
+    }
+
+    tagged_file.save_to_path(output_path, WriteOptions::default())?;
+
+    Ok(())
 }
 
 async fn download_track(
@@ -318,7 +789,6 @@ async fn download_track(
     track: &Track,
     output_dir: &PathBuf,
     console: &mut Console,
-    download_lyrics_flag: bool,
 ) -> AppResult<()> {
     let artist_name = track
         .artist
@@ -328,12 +798,7 @@ async fn download_track(
         .unwrap_or_else(|| "Unknown Artist".to_string());
 
     let title = &track.title;
-    let version = track.version.as_deref().unwrap_or("");
-    let full_title = if version.is_empty() {
-        title.clone()
-    } else {
-        format!("{} ({})", title, version)
-    };
+    let full_title = build_full_title(title, track.version.as_deref());
 
     console.println("");
     console.println(&format!(
@@ -362,15 +827,6 @@ async fn download_track(
     );
     console.println_colored(&format!("OK ({})", quality_info), Color::Green);
 
-    let ext = stream_info.file_extension();
-    let filename = format!(
-        "{} - {}.{}",
-        sanitize_filename(&artist_name),
-        sanitize_filename(&full_title),
-        ext
-    );
-    let output_path = output_dir.join(&filename);
-
     console.status("Downloading... ");
 
     let pb = ProgressBar::new_spinner();
@@ -388,6 +844,20 @@ async fn download_track(
     pb.finish_and_clear();
     console.println_colored(&format!("OK ({:.2} MB)", size_mb), Color::Green);
 
+    let container = detect_container(&data);
+    let ext = match container {
+        ContainerKind::Flac => "flac",
+        ContainerKind::Mp4 => "m4a",
+    };
+
+    let filename = format!(
+        "{} - {}.{}",
+        sanitize_filename(&artist_name),
+        sanitize_filename(&full_title),
+        ext
+    );
+    let output_path = output_dir.join(&filename);
+
     console.status("Saving... ");
     tokio::fs::write(&output_path, &data).await?;
     console.println_colored("OK", Color::Green);
@@ -395,15 +865,25 @@ async fn download_track(
     console.print("  Saved: ");
     console.println_colored(&output_path.display().to_string(), Color::Cyan);
 
-    if download_lyrics_flag {
-        let lyrics_filename = format!(
-            "{} - {}.lrc",
-            sanitize_filename(&artist_name),
-            sanitize_filename(&full_title)
-        );
-        let lyrics_path = output_dir.join(&lyrics_filename);
-        let _ = download_lyrics(client, track.id, &lyrics_path, console).await;
-    }
+    let lyrics_filename = format!(
+        "{} - {}.lrc",
+        sanitize_filename(&artist_name),
+        sanitize_filename(&full_title)
+    );
+    let lyrics_path = output_dir.join(&lyrics_filename);
+    let lyrics_content = download_lyrics(client, track.id, &lyrics_path, console).await?;
+
+    console.status("Embedding metadata... ");
+    embed_metadata(
+        client,
+        &output_path,
+        track,
+        &full_title,
+        &stream_info,
+        lyrics_content,
+    )
+    .await?;
+    console.println_colored("OK", Color::Green);
 
     Ok(())
 }
@@ -413,7 +893,6 @@ async fn download_album(
     album_id: u64,
     output_dir: &PathBuf,
     console: &mut Console,
-    download_lyrics_flag: bool,
 ) -> AppResult<()> {
     let album = client.get_album(album_id).await?;
     let artist_name = album
@@ -440,9 +919,7 @@ async fn download_album(
     for (i, track) in tracks_page.items.iter().enumerate() {
         console.println("");
         console.println(&format!("[{}/{}]", i + 1, total));
-        if let Err(e) =
-            download_track(client, track, &album_folder, console, download_lyrics_flag).await
-        {
+        if let Err(e) = download_track(client, track, &album_folder, console).await {
             console.error(&format!("Failed to download: {}", e));
         }
     }
@@ -460,7 +937,6 @@ async fn download_playlist(
     playlist: &Playlist,
     output_dir: &PathBuf,
     console: &mut Console,
-    download_lyrics_flag: bool,
 ) -> AppResult<()> {
     let creator_name = playlist
         .creator
@@ -497,14 +973,8 @@ async fn download_playlist(
             track_num += 1;
             console.println("");
             console.println(&format!("[{}/{}]", track_num, total));
-            if let Err(e) = download_track(
-                client,
-                &playlist_item.item,
-                &playlist_folder,
-                console,
-                download_lyrics_flag,
-            )
-            .await
+            if let Err(e) =
+                download_track(client, &playlist_item.item, &playlist_folder, console).await
             {
                 console.error(&format!("Failed to download: {}", e));
             }
@@ -543,15 +1013,15 @@ async fn main() -> AppResult<()> {
         "track" => {
             let track_id: u64 = id.parse()?;
             let track = client.get_track(track_id).await?;
-            download_track(&client, &track, &output_dir, &mut console, args.lyrics).await?;
+            download_track(&client, &track, &output_dir, &mut console).await?;
         }
         "album" => {
             let album_id: u64 = id.parse()?;
-            download_album(&client, album_id, &output_dir, &mut console, args.lyrics).await?;
+            download_album(&client, album_id, &output_dir, &mut console).await?;
         }
         "playlist" => {
             let playlist = client.get_playlist(&id).await?;
-            download_playlist(&client, &playlist, &output_dir, &mut console, args.lyrics).await?;
+            download_playlist(&client, &playlist, &output_dir, &mut console).await?;
         }
         _ => {
             return Err(format!("Unsupported content type: {}", content_type).into());

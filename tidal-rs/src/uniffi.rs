@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::core::api::{ClientConfig, TidalClient};
+use crate::core::api::TidalClient;
 use crate::core::auth::{AuthSession, Credentials, DeviceAuthResponse, TokenResponse};
 use crate::core::error::TidalError;
 use crate::core::stream::AudioQuality;

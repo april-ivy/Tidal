@@ -63,7 +63,7 @@ pub struct Subscription {
     pub highest_sound_quality: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Artist {
     pub id: u64,
     pub name: String,
@@ -72,12 +72,40 @@ pub struct Artist {
     #[serde(rename = "artistTypes")]
     pub artist_types: Option<Vec<String>>,
     pub picture: Option<String>,
+    pub handle: Option<String>,
+    #[serde(rename = "userId")]
+    pub user_id: Option<u64>,
+    #[serde(rename = "type")]
+    pub artist_type: Option<String>,
+    #[serde(rename = "contributionLinkUrl")]
+    pub contribution_link_url: Option<String>,
+    #[serde(rename = "artistRoles")]
+    pub artist_roles: Option<Vec<ArtistRole>>,
+    pub mixes: Option<ArtistMixes>,
+    #[serde(rename = "selectedAlbumCoverFallback")]
+    pub selected_album_cover_fallback: Option<String>,
 }
 
 impl Artist {
     pub fn picture_url(&self, size: ImageSize) -> Option<String> {
-        self.picture.as_ref().map(|uuid| image_url(uuid, size))
+        self.picture
+            .as_ref()
+            .or(self.selected_album_cover_fallback.as_ref())
+            .map(|uuid| image_url(uuid, size))
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ArtistRole {
+    pub category: String,
+    #[serde(rename = "categoryId")]
+    pub category_id: i32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ArtistMixes {
+    #[serde(rename = "ARTIST_MIX")]
+    pub artist_mix: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -96,12 +124,12 @@ pub struct ArtistLink {
     pub site_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MediaMetadata {
     pub tags: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Album {
     pub id: u64,
     pub title: String,
@@ -109,8 +137,12 @@ pub struct Album {
     pub number_of_tracks: Option<u32>,
     #[serde(rename = "numberOfVolumes")]
     pub number_of_volumes: Option<u32>,
+    #[serde(rename = "numberOfVideos")]
+    pub number_of_videos: Option<u32>,
     #[serde(rename = "releaseDate")]
     pub release_date: Option<String>,
+    #[serde(rename = "streamStartDate")]
+    pub stream_start_date: Option<String>,
     pub duration: Option<u32>,
     pub upc: Option<String>,
     pub artist: Option<Artist>,
@@ -129,6 +161,17 @@ pub struct Album {
     pub album_type: Option<String>,
     pub version: Option<String>,
     pub cover: Option<String>,
+    #[serde(rename = "videoCover")]
+    pub video_cover: Option<String>,
+    #[serde(rename = "vibrantColor")]
+    pub vibrant_color: Option<String>,
+    #[serde(rename = "streamReady")]
+    pub stream_ready: Option<bool>,
+    #[serde(rename = "allowStreaming")]
+    pub allow_streaming: Option<bool>,
+    #[serde(rename = "payToStream")]
+    pub pay_to_stream: Option<bool>,
+    pub upload: Option<bool>,
 }
 
 impl Album {
@@ -157,7 +200,13 @@ pub struct AlbumReview {
     pub source: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TrackMixes {
+    #[serde(rename = "TRACK_MIX")]
+    pub track_mix: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Track {
     pub id: u64,
     pub title: String,
@@ -181,7 +230,12 @@ pub struct Track {
     pub peak: Option<f32>,
     pub url: Option<String>,
     pub popularity: Option<u32>,
+    #[serde(rename = "doublePopularity")]
+    pub double_popularity: Option<f64>,
     pub bpm: Option<u32>,
+    pub key: Option<String>,
+    #[serde(rename = "keyScale")]
+    pub key_scale: Option<String>,
     #[serde(rename = "mediaMetadata")]
     pub media_metadata: Option<MediaMetadata>,
     pub version: Option<String>,
@@ -190,6 +244,23 @@ pub struct Track {
     pub allow_streaming: Option<bool>,
     #[serde(rename = "streamReady")]
     pub stream_ready: Option<bool>,
+    #[serde(rename = "streamStartDate")]
+    pub stream_start_date: Option<String>,
+    #[serde(rename = "adSupportedStreamReady")]
+    pub ad_supported_stream_ready: Option<bool>,
+    #[serde(rename = "djReady")]
+    pub dj_ready: Option<bool>,
+    #[serde(rename = "stemReady")]
+    pub stem_ready: Option<bool>,
+    #[serde(rename = "premiumStreamingOnly")]
+    pub premium_streaming_only: Option<bool>,
+    #[serde(rename = "payToStream")]
+    pub pay_to_stream: Option<bool>,
+    #[serde(rename = "accessType")]
+    pub access_type: Option<String>,
+    pub spotlighted: Option<bool>,
+    pub upload: Option<bool>,
+    pub mixes: Option<TrackMixes>,
 }
 
 impl Track {
@@ -215,6 +286,25 @@ impl Track {
 
     pub fn cover_url(&self, size: ImageSize) -> Option<String> {
         self.album.as_ref().and_then(|a| a.cover_url(size))
+    }
+
+    pub fn musical_key_formatted(&self) -> Option<String> {
+        self.key.as_ref().map(|k| {
+            let scale = self.key_scale.as_deref().unwrap_or("");
+            let key_display = match k.as_str() {
+                "AB" => "A♭",
+                "BB" => "B♭",
+                "DB" => "D♭",
+                "EB" => "E♭",
+                "GB" => "G♭",
+                other => other,
+            };
+            if scale.is_empty() {
+                key_display.to_string()
+            } else {
+                format!("{} {}", key_display, scale.to_lowercase())
+            }
+        })
     }
 }
 
@@ -329,18 +419,31 @@ pub struct MixItem {
     pub item_type: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Contributor {
     pub name: String,
     pub id: Option<u64>,
     pub role: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Credit {
     #[serde(rename = "type")]
     pub credit_type: String,
     pub contributors: Vec<Contributor>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TrackCredits {
+    pub item: Track,
+    #[serde(rename = "type")]
+    pub item_type: Option<String>,
+    pub credits: Vec<Credit>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AlbumCredits {
+    pub items: Vec<Credit>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -620,4 +723,65 @@ impl DirectHit {
             _ => DirectHitValue::Unknown(self.value.clone()),
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlbumPage {
+    #[serde(rename = "selfLink")]
+    pub self_link: Option<String>,
+    pub id: Option<String>,
+    pub title: Option<String>,
+    pub rows: Vec<AlbumPageRow>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlbumPageRow {
+    pub modules: Vec<AlbumPageModule>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlbumPageModule {
+    pub id: Option<String>,
+    #[serde(rename = "type")]
+    pub module_type: String,
+    pub width: Option<u32>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub album: Option<Album>,
+    pub review: Option<AlbumReview>,
+    pub credits: Option<AlbumCredits>,
+    #[serde(rename = "pagedList")]
+    pub paged_list: Option<PagedList>,
+    #[serde(rename = "releaseDate")]
+    pub release_date: Option<String>,
+    pub copyright: Option<String>,
+    #[serde(rename = "listFormat")]
+    pub list_format: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PagedList {
+    #[serde(rename = "dataApiPath")]
+    pub data_api_path: Option<String>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+    #[serde(rename = "totalNumberOfItems")]
+    pub total_number_of_items: Option<u32>,
+    pub items: Vec<PagedListItem>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PagedListItem {
+    pub item: Option<Track>,
+    #[serde(rename = "type")]
+    pub item_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlbumItemsCreditsResponse {
+    pub limit: u32,
+    pub offset: u32,
+    #[serde(rename = "totalNumberOfItems")]
+    pub total_number_of_items: u32,
+    pub items: Vec<TrackCredits>,
 }

@@ -37,13 +37,40 @@ impl TidalClient {
     }
 
     pub async fn get_track_credits(&self, track_id: u64) -> Result<Vec<Credit>> {
-        let url = self.api_url(&format!("tracks/{}/credits", track_id), &[]);
-        #[derive(Deserialize)]
-        struct CreditsResponse {
-            credits: Vec<Credit>,
+        let track = self.get_track(track_id).await?;
+        
+        if let Some(album) = track.album {
+            let url = self.api_url(
+                &format!("albums/{}/items/credits", album.id),
+                &[
+                    ("replace", "true"),
+                    ("includeContributors", "true"),
+                    ("offset", "0"),
+                    ("limit", "100"),
+                ],
+            );
+            
+            #[derive(Deserialize)]
+            struct TrackWithCredits {
+                item: Track,
+                credits: Vec<Credit>,
+            }
+            
+            #[derive(Deserialize)]
+            struct AlbumCreditsResponse {
+                items: Vec<TrackWithCredits>,
+            }
+            
+            let resp: AlbumCreditsResponse = self.get(&url).await?;
+            
+            for track_credits in resp.items {
+                if track_credits.item.id == track_id {
+                    return Ok(track_credits.credits);
+                }
+            }
         }
-        let resp: CreditsResponse = self.get(&url).await?;
-        Ok(resp.credits)
+        
+        Ok(Vec::new())
     }
 
     pub async fn get_track_mix(&self, track_id: u64) -> Result<Mix> {
@@ -63,4 +90,23 @@ impl TidalClient {
         );
         self.get(&url).await
     }
+
+    pub async fn get_track_full_info(&self, track_id: u64) -> Result<TrackFullInfo> {
+        let track = self.get_track(track_id).await?;
+        let credits = self.get_track_credits(track_id).await.ok();
+        let lyrics = self.get_lyrics(track_id).await.ok();
+
+        Ok(TrackFullInfo {
+            track,
+            credits,
+            lyrics,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct TrackFullInfo {
+    pub track: Track,
+    pub credits: Option<Vec<Credit>>,
+    pub lyrics: Option<Lyrics>,
 }
