@@ -48,6 +48,7 @@ pub struct DeviceAuthResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TokenResponse {
     pub access_token: String,
+    #[serde(default)]
     pub refresh_token: String,
     pub token_type: String,
     pub expires_in: u64,

@@ -3,8 +3,14 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::core::auth::{AuthSession, CLIENT_TOKEN};
-use crate::core::error::{Result, TidalError};
+use crate::core::auth::{
+    AuthSession,
+    CLIENT_TOKEN,
+};
+use crate::core::error::{
+    Result,
+    TidalError,
+};
 
 pub(crate) const API_BASE: &str = "https://api.tidal.com/v1";
 pub(crate) const LISTEN_API_BASE: &str = "https://listen.tidal.com/v1";
@@ -107,7 +113,12 @@ impl TidalClient {
         &self.config
     }
 
-    pub fn update_tokens(&mut self, access_token: String, refresh_token: Option<String>, expires_at: Option<u64>) {
+    pub fn update_tokens(
+        &mut self,
+        access_token: String,
+        refresh_token: Option<String>,
+        expires_at: Option<u64>,
+    ) {
         self.access_token = access_token;
         if let Some(rt) = refresh_token {
             self.refresh_token = rt;

@@ -171,7 +171,11 @@ impl TidalClient {
         self.delete_empty(&url).await
     }
 
-    pub async fn remove_favorite_playlist(&mut self, user_id: u64, playlist_id: &str) -> Result<()> {
+    pub async fn remove_favorite_playlist(
+        &mut self,
+        user_id: u64,
+        playlist_id: &str,
+    ) -> Result<()> {
         let url = self.api_url(
             &format!("users/{}/favorites/playlists/{}", user_id, playlist_id),
             &[],

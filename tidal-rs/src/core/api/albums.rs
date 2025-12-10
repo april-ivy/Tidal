@@ -91,7 +91,9 @@ impl TidalClient {
         let limit = 100u32;
 
         loop {
-            let response = self.get_album_items_credits(album_id, limit, offset).await?;
+            let response = self
+                .get_album_items_credits(album_id, limit, offset)
+                .await?;
             all_credits.extend(response.items);
 
             if all_credits.len() >= response.total_number_of_items as usize {
@@ -108,7 +110,11 @@ impl TidalClient {
         self.get(&url).await
     }
 
-    pub async fn get_similar_albums(&mut self, album_id: u64, limit: u32) -> Result<ItemsPage<Album>> {
+    pub async fn get_similar_albums(
+        &mut self,
+        album_id: u64,
+        limit: u32,
+    ) -> Result<ItemsPage<Album>> {
         let url = self.api_url(
             &format!("albums/{}/similar", album_id),
             &[("limit", &limit.to_string())],
@@ -117,10 +123,7 @@ impl TidalClient {
     }
 
     pub async fn get_album_page(&mut self, album_id: u64) -> Result<AlbumPage> {
-        let url = self.pages_url(
-            &format!("album?albumId={}", album_id),
-            &[],
-        );
+        let url = self.pages_url(&format!("album?albumId={}", album_id), &[]);
         self.get(&url).await
     }
 

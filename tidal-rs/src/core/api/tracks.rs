@@ -38,7 +38,7 @@ impl TidalClient {
 
     pub async fn get_track_credits(&mut self, track_id: u64) -> Result<Vec<Credit>> {
         let track = self.get_track(track_id).await?;
-        
+
         if let Some(album) = track.album {
             let url = self.api_url(
                 &format!("albums/{}/items/credits", album.id),
@@ -49,27 +49,27 @@ impl TidalClient {
                     ("limit", "100"),
                 ],
             );
-            
+
             #[derive(Deserialize)]
             struct TrackWithCredits {
                 item: Track,
                 credits: Vec<Credit>,
             }
-            
+
             #[derive(Deserialize)]
             struct AlbumCreditsResponse {
                 items: Vec<TrackWithCredits>,
             }
-            
+
             let resp: AlbumCreditsResponse = self.get(&url).await?;
-            
+
             for track_credits in resp.items {
                 if track_credits.item.id == track_id {
                     return Ok(track_credits.credits);
                 }
             }
         }
-        
+
         Ok(Vec::new())
     }
 

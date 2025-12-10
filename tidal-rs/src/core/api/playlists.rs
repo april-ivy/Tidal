@@ -55,7 +55,11 @@ impl TidalClient {
         self.post(&url, Some(&body.to_string())).await
     }
 
-    pub async fn add_tracks_to_playlist(&mut self, playlist_id: &str, track_ids: &[u64]) -> Result<()> {
+    pub async fn add_tracks_to_playlist(
+        &mut self,
+        playlist_id: &str,
+        track_ids: &[u64],
+    ) -> Result<()> {
         let ids = track_ids
             .iter()
             .map(|id| id.to_string())
