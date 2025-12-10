@@ -12,12 +12,12 @@ use super::models::{
 use crate::core::error::Result;
 
 impl TidalClient {
-    pub async fn get_track(&self, track_id: u64) -> Result<Track> {
+    pub async fn get_track(&mut self, track_id: u64) -> Result<Track> {
         let url = self.api_url(&format!("tracks/{}", track_id), &[]);
         self.get(&url).await
     }
 
-    pub async fn get_tracks(&self, track_ids: &[u64]) -> Result<Vec<Track>> {
+    pub async fn get_tracks(&mut self, track_ids: &[u64]) -> Result<Vec<Track>> {
         if track_ids.is_empty() {
             return Ok(vec![]);
         }
@@ -36,7 +36,7 @@ impl TidalClient {
         Ok(resp.items)
     }
 
-    pub async fn get_track_credits(&self, track_id: u64) -> Result<Vec<Credit>> {
+    pub async fn get_track_credits(&mut self, track_id: u64) -> Result<Vec<Credit>> {
         let track = self.get_track(track_id).await?;
         
         if let Some(album) = track.album {
@@ -73,17 +73,17 @@ impl TidalClient {
         Ok(Vec::new())
     }
 
-    pub async fn get_track_mix(&self, track_id: u64) -> Result<Mix> {
+    pub async fn get_track_mix(&mut self, track_id: u64) -> Result<Mix> {
         let url = self.api_url(&format!("tracks/{}/mix", track_id), &[]);
         self.get(&url).await
     }
 
-    pub async fn get_lyrics(&self, track_id: u64) -> Result<Lyrics> {
+    pub async fn get_lyrics(&mut self, track_id: u64) -> Result<Lyrics> {
         let url = self.api_url(&format!("tracks/{}/lyrics", track_id), &[]);
         self.get(&url).await
     }
 
-    pub async fn get_mix_tracks(&self, mix_id: &str, limit: u32) -> Result<ItemsPage<MixItem>> {
+    pub async fn get_mix_tracks(&mut self, mix_id: &str, limit: u32) -> Result<ItemsPage<MixItem>> {
         let url = self.api_url(
             &format!("mixes/{}/items", mix_id),
             &[("limit", &limit.to_string())],
@@ -91,7 +91,7 @@ impl TidalClient {
         self.get(&url).await
     }
 
-    pub async fn get_track_full_info(&self, track_id: u64) -> Result<TrackFullInfo> {
+    pub async fn get_track_full_info(&mut self, track_id: u64) -> Result<TrackFullInfo> {
         let track = self.get_track(track_id).await?;
         let credits = self.get_track_credits(track_id).await.ok();
         let lyrics = self.get_lyrics(track_id).await.ok();

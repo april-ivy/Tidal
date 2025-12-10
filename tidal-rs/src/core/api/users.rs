@@ -22,17 +22,17 @@ impl TidalClient {
         Ok(session)
     }
 
-    pub async fn get_user(&self, user_id: u64) -> Result<UserProfile> {
+    pub async fn get_user(&mut self, user_id: u64) -> Result<UserProfile> {
         let url = self.api_url(&format!("users/{}", user_id), &[]);
         self.get(&url).await
     }
 
-    pub async fn get_subscription(&self, user_id: u64) -> Result<Subscription> {
+    pub async fn get_subscription(&mut self, user_id: u64) -> Result<Subscription> {
         let url = self.api_url(&format!("users/{}/subscription", user_id), &[]);
         self.get(&url).await
     }
 
-    pub async fn get_folders(&self, user_id: u64) -> Result<Vec<Folder>> {
+    pub async fn get_folders(&mut self, user_id: u64) -> Result<Vec<Folder>> {
         let url = self.api_url(&format!("users/{}/folders", user_id), &[]);
         #[derive(Deserialize)]
         struct FoldersResponse {
@@ -43,7 +43,7 @@ impl TidalClient {
     }
 
     pub async fn get_folder_items(
-        &self,
+        &mut self,
         user_id: u64,
         folder_id: &str,
         limit: u32,
@@ -60,7 +60,7 @@ impl TidalClient {
     }
 
     pub async fn create_folder(
-        &self,
+        &mut self,
         user_id: u64,
         name: &str,
         parent: Option<&str>,
@@ -73,7 +73,7 @@ impl TidalClient {
         self.post(&url, Some(&body.to_string())).await
     }
 
-    pub async fn delete_folder(&self, user_id: u64, folder_id: &str) -> Result<()> {
+    pub async fn delete_folder(&mut self, user_id: u64, folder_id: &str) -> Result<()> {
         let url = self.api_url(&format!("users/{}/folders/{}", user_id, folder_id), &[]);
         self.delete_empty(&url).await
     }

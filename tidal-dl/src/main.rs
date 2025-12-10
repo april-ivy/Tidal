@@ -302,7 +302,7 @@ fn format_duration(seconds: u32) -> String {
 }
 
 async fn download_lyrics(
-    client: &TidalClient,
+    client: &mut TidalClient,
     track_id: u64,
     output_path: &PathBuf,
     console: &mut Console,
@@ -412,7 +412,7 @@ fn detect_container(data: &[u8]) -> ContainerKind {
 }
 
 async fn embed_metadata(
-    client: &TidalClient,
+    client: &mut TidalClient,
     output_path: &Path,
     track: &Track,
     full_title: &str,
@@ -785,7 +785,7 @@ async fn embed_metadata(
 }
 
 async fn download_track(
-    client: &TidalClient,
+    client: &mut TidalClient,
     track: &Track,
     output_dir: &PathBuf,
     console: &mut Console,
@@ -889,7 +889,7 @@ async fn download_track(
 }
 
 async fn download_album(
-    client: &TidalClient,
+    client: &mut TidalClient,
     album_id: u64,
     output_dir: &PathBuf,
     console: &mut Console,
@@ -933,7 +933,7 @@ async fn download_album(
 }
 
 async fn download_playlist(
-    client: &TidalClient,
+    client: &mut TidalClient,
     playlist: &Playlist,
     output_dir: &PathBuf,
     console: &mut Console,
@@ -1004,7 +1004,7 @@ async fn main() -> AppResult<()> {
     console.println("");
     console.println("tidal-dl - Tidal Music Downloader");
 
-    let client = get_client(&mut console).await?;
+    let mut client = get_client(&mut console).await?;
     let output_dir = args
         .output
         .unwrap_or_else(|| std::env::current_dir().unwrap());
@@ -1013,15 +1013,15 @@ async fn main() -> AppResult<()> {
         "track" => {
             let track_id: u64 = id.parse()?;
             let track = client.get_track(track_id).await?;
-            download_track(&client, &track, &output_dir, &mut console).await?;
+            download_track(&mut client, &track, &output_dir, &mut console).await?;
         }
         "album" => {
             let album_id: u64 = id.parse()?;
-            download_album(&client, album_id, &output_dir, &mut console).await?;
+            download_album(&mut client, album_id, &output_dir, &mut console).await?;
         }
         "playlist" => {
             let playlist = client.get_playlist(&id).await?;
-            download_playlist(&client, &playlist, &output_dir, &mut console).await?;
+            download_playlist(&mut client, &playlist, &output_dir, &mut console).await?;
         }
         _ => {
             return Err(format!("Unsupported content type: {}", content_type).into());

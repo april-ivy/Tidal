@@ -12,7 +12,7 @@ use super::models::{
 use crate::core::error::Result;
 
 impl TidalClient {
-    pub async fn get_genres(&self) -> Result<Vec<Genre>> {
+    pub async fn get_genres(&mut self) -> Result<Vec<Genre>> {
         let url = self.api_url("genres", &[]);
         #[derive(Deserialize)]
         struct GenresResponse {
@@ -23,7 +23,7 @@ impl TidalClient {
     }
 
     pub async fn get_genre_tracks(
-        &self,
+        &mut self,
         genre: &str,
         limit: u32,
         offset: u32,
@@ -38,7 +38,7 @@ impl TidalClient {
         self.get(&url).await
     }
 
-    pub async fn get_moods(&self) -> Result<Vec<Mood>> {
+    pub async fn get_moods(&mut self) -> Result<Vec<Mood>> {
         let url = self.api_url("moods", &[]);
         #[derive(Deserialize)]
         struct MoodsResponse {
@@ -49,7 +49,7 @@ impl TidalClient {
     }
 
     pub async fn get_mood_playlists(
-        &self,
+        &mut self,
         mood: &str,
         limit: u32,
         offset: u32,
@@ -64,7 +64,7 @@ impl TidalClient {
         self.get(&url).await
     }
 
-    pub async fn get_video(&self, video_id: u64) -> Result<Video> {
+    pub async fn get_video(&mut self, video_id: u64) -> Result<Video> {
         let url = self.api_url(&format!("videos/{}", video_id), &[]);
         self.get(&url).await
     }

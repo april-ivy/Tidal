@@ -7,13 +7,13 @@ use super::models::{
 use crate::core::error::Result;
 
 impl TidalClient {
-    pub async fn get_playlist(&self, playlist_id: &str) -> Result<Playlist> {
+    pub async fn get_playlist(&mut self, playlist_id: &str) -> Result<Playlist> {
         let url = self.api_url(&format!("playlists/{}", playlist_id), &[]);
         self.get(&url).await
     }
 
     pub async fn get_playlist_tracks(
-        &self,
+        &mut self,
         playlist_id: &str,
         limit: u32,
         offset: u32,
@@ -29,7 +29,7 @@ impl TidalClient {
     }
 
     pub async fn get_user_playlists(
-        &self,
+        &mut self,
         user_id: u64,
         limit: u32,
         offset: u32,
@@ -45,7 +45,7 @@ impl TidalClient {
     }
 
     pub async fn create_playlist(
-        &self,
+        &mut self,
         user_id: u64,
         title: &str,
         description: &str,
@@ -55,7 +55,7 @@ impl TidalClient {
         self.post(&url, Some(&body.to_string())).await
     }
 
-    pub async fn add_tracks_to_playlist(&self, playlist_id: &str, track_ids: &[u64]) -> Result<()> {
+    pub async fn add_tracks_to_playlist(&mut self, playlist_id: &str, track_ids: &[u64]) -> Result<()> {
         let ids = track_ids
             .iter()
             .map(|id| id.to_string())
@@ -68,7 +68,7 @@ impl TidalClient {
         self.post_empty(&url, None).await
     }
 
-    pub async fn delete_playlist(&self, playlist_id: &str) -> Result<()> {
+    pub async fn delete_playlist(&mut self, playlist_id: &str) -> Result<()> {
         let url = self.api_url(&format!("playlists/{}", playlist_id), &[]);
         self.delete_empty(&url).await
     }

@@ -3,11 +3,8 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::core::auth::CLIENT_TOKEN;
-use crate::core::error::{
-    Result,
-    TidalError,
-};
+use crate::core::auth::{AuthSession, CLIENT_TOKEN};
+use crate::core::error::{Result, TidalError};
 
 pub(crate) const API_BASE: &str = "https://api.tidal.com/v1";
 pub(crate) const LISTEN_API_BASE: &str = "https://listen.tidal.com/v1";
@@ -66,6 +63,7 @@ pub struct TidalClient {
     pub country_code: String,
     pub user_id: Option<u64>,
     pub(crate) config: ClientConfig,
+    pub expires_at: u64,
 }
 
 impl TidalClient {
@@ -96,11 +94,62 @@ impl TidalClient {
             country_code,
             user_id: None,
             config,
+            expires_at: 0,
         }
+    }
+
+    pub fn with_expiry(mut self, expires_at: u64) -> Self {
+        self.expires_at = expires_at;
+        self
     }
 
     pub fn config(&self) -> &ClientConfig {
         &self.config
+    }
+
+    pub fn update_tokens(&mut self, access_token: String, refresh_token: Option<String>, expires_at: Option<u64>) {
+        self.access_token = access_token;
+        if let Some(rt) = refresh_token {
+            self.refresh_token = rt;
+        }
+        if let Some(exp) = expires_at {
+            self.expires_at = exp;
+        }
+    }
+
+    pub async fn refresh_tokens(&mut self) -> Result<()> {
+        let auth = AuthSession::new();
+        let response = auth.refresh_token(&self.refresh_token).await?;
+
+        self.access_token = response.access_token;
+        if !response.refresh_token.is_empty() {
+            self.refresh_token = response.refresh_token;
+        }
+        self.expires_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + response.expires_in;
+
+        Ok(())
+    }
+
+    pub fn is_token_expired(&self) -> bool {
+        if self.expires_at == 0 {
+            return false;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        now >= self.expires_at
+    }
+
+    async fn ensure_valid_token(&mut self) -> Result<()> {
+        if self.is_token_expired() {
+            self.refresh_tokens().await?;
+        }
+        Ok(())
     }
 
     pub(crate) fn headers(&self) -> Result<reqwest::header::HeaderMap> {
@@ -137,9 +186,11 @@ impl TidalClient {
     }
 
     pub(crate) async fn get_with_retry<T: for<'de> Deserialize<'de>>(
-        &self,
+        &mut self,
         url: &str,
     ) -> Result<T> {
+        self.ensure_valid_token().await?;
+
         let mut last_error = None;
 
         for attempt in 0..=self.config.max_retries {
@@ -150,6 +201,18 @@ impl TidalClient {
             match self.get_once::<T>(url).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
+                    if let TidalError::Api { status: 401, .. } = &e {
+                        if let Ok(()) = self.refresh_tokens().await {
+                            match self.get_once::<T>(url).await {
+                                Ok(result) => return Ok(result),
+                                Err(retry_err) => {
+                                    last_error = Some(retry_err);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
                     if matches!(e, TidalError::Network(_)) && attempt < self.config.max_retries {
                         last_error = Some(e);
                         continue;
@@ -180,15 +243,17 @@ impl TidalClient {
         Ok(serde_json::from_str(&text)?)
     }
 
-    pub(crate) async fn get<T: for<'de> Deserialize<'de>>(&self, url: &str) -> Result<T> {
+    pub(crate) async fn get<T: for<'de> Deserialize<'de>>(&mut self, url: &str) -> Result<T> {
         self.get_with_retry(url).await
     }
 
     pub(crate) async fn post<T: for<'de> Deserialize<'de>>(
-        &self,
+        &mut self,
         url: &str,
         body: Option<&str>,
     ) -> Result<T> {
+        self.ensure_valid_token().await?;
+
         let mut req = self.client.post(url).headers(self.headers()?);
         if let Some(b) = body {
             req = req
@@ -198,6 +263,28 @@ impl TidalClient {
         let resp = req.send().await?;
         let status = resp.status();
         let text = resp.text().await?;
+
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            self.refresh_tokens().await?;
+            let mut req = self.client.post(url).headers(self.headers()?);
+            if let Some(b) = body {
+                req = req
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .body(b.to_string());
+            }
+            let resp = req.send().await?;
+            let status = resp.status();
+            let text = resp.text().await?;
+
+            if !status.is_success() {
+                return Err(TidalError::Api {
+                    status: status.as_u16(),
+                    message: text[..text.len().min(200)].to_string(),
+                });
+            }
+
+            return Ok(serde_json::from_str(&text)?);
+        }
 
         if !status.is_success() {
             return Err(TidalError::Api {
@@ -209,7 +296,9 @@ impl TidalClient {
         Ok(serde_json::from_str(&text)?)
     }
 
-    pub(crate) async fn post_empty(&self, url: &str, body: Option<&str>) -> Result<()> {
+    pub(crate) async fn post_empty(&mut self, url: &str, body: Option<&str>) -> Result<()> {
+        self.ensure_valid_token().await?;
+
         let mut req = self.client.post(url).headers(self.headers()?);
         if let Some(b) = body {
             req = req
@@ -219,6 +308,28 @@ impl TidalClient {
         let resp = req.send().await?;
         let status = resp.status();
 
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            self.refresh_tokens().await?;
+            let mut req = self.client.post(url).headers(self.headers()?);
+            if let Some(b) = body {
+                req = req
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .body(b.to_string());
+            }
+            let resp = req.send().await?;
+            let status = resp.status();
+
+            if !status.is_success() {
+                let text = resp.text().await?;
+                return Err(TidalError::Api {
+                    status: status.as_u16(),
+                    message: text[..text.len().min(200)].to_string(),
+                });
+            }
+
+            return Ok(());
+        }
+
         if !status.is_success() {
             let text = resp.text().await?;
             return Err(TidalError::Api {
@@ -230,7 +341,9 @@ impl TidalClient {
         Ok(())
     }
 
-    pub(crate) async fn put_empty(&self, url: &str, body: Option<&str>) -> Result<()> {
+    pub(crate) async fn put_empty(&mut self, url: &str, body: Option<&str>) -> Result<()> {
+        self.ensure_valid_token().await?;
+
         let mut req = self.client.put(url).headers(self.headers()?);
         if let Some(b) = body {
             req = req
@@ -240,6 +353,28 @@ impl TidalClient {
         let resp = req.send().await?;
         let status = resp.status();
 
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            self.refresh_tokens().await?;
+            let mut req = self.client.put(url).headers(self.headers()?);
+            if let Some(b) = body {
+                req = req
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .body(b.to_string());
+            }
+            let resp = req.send().await?;
+            let status = resp.status();
+
+            if !status.is_success() {
+                let text = resp.text().await?;
+                return Err(TidalError::Api {
+                    status: status.as_u16(),
+                    message: text[..text.len().min(200)].to_string(),
+                });
+            }
+
+            return Ok(());
+        }
+
         if !status.is_success() {
             let text = resp.text().await?;
             return Err(TidalError::Api {
@@ -251,7 +386,9 @@ impl TidalClient {
         Ok(())
     }
 
-    pub(crate) async fn delete_empty(&self, url: &str) -> Result<()> {
+    pub(crate) async fn delete_empty(&mut self, url: &str) -> Result<()> {
+        self.ensure_valid_token().await?;
+
         let resp = self
             .client
             .delete(url)
@@ -259,6 +396,27 @@ impl TidalClient {
             .send()
             .await?;
         let status = resp.status();
+
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            self.refresh_tokens().await?;
+            let resp = self
+                .client
+                .delete(url)
+                .headers(self.headers()?)
+                .send()
+                .await?;
+            let status = resp.status();
+
+            if !status.is_success() {
+                let text = resp.text().await?;
+                return Err(TidalError::Api {
+                    status: status.as_u16(),
+                    message: text[..text.len().min(200)].to_string(),
+                });
+            }
+
+            return Ok(());
+        }
 
         if !status.is_success() {
             let text = resp.text().await?;
@@ -306,22 +464,22 @@ impl TidalClient {
     }
 
     pub(crate) fn pages_url(&self, path: &str, extra_params: &[(&str, &str)]) -> String {
-    let mut params = vec![
-        ("countryCode", self.country_code.as_str()),
-        ("locale", "en_US"),
-        ("deviceType", "BROWSER"),
-    ];
-    params.extend_from_slice(extra_params);
+        let mut params = vec![
+            ("countryCode", self.country_code.as_str()),
+            ("locale", "en_US"),
+            ("deviceType", "BROWSER"),
+        ];
+        params.extend_from_slice(extra_params);
 
-    let query = params
-        .iter()
-        .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
-        .collect::<Vec<_>>()
-        .join("&");
+        let query = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
 
-    let separator = if path.contains('?') { "&" } else { "?" };
-    format!("https://tidal.com/v1/pages/{}{}{}", path, separator, query)
-}
+        let separator = if path.contains('?') { "&" } else { "?" };
+        format!("https://tidal.com/v1/pages/{}{}{}", path, separator, query)
+    }
 
     pub(crate) fn suggestions_url(&self, query: &str, explicit: bool, hybrid: bool) -> String {
         format!(

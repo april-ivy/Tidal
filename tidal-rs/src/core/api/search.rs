@@ -12,12 +12,12 @@ use super::models::{
 use crate::core::error::Result;
 
 impl TidalClient {
-    pub async fn get_suggestions(&self, query: &str) -> Result<SearchSuggestions> {
+    pub async fn get_suggestions(&mut self, query: &str) -> Result<SearchSuggestions> {
         self.get_suggestions_with_options(query, true, true).await
     }
 
     pub async fn get_suggestions_with_options(
-        &self,
+        &mut self,
         query: &str,
         explicit: bool,
         hybrid: bool,
@@ -26,7 +26,7 @@ impl TidalClient {
         self.get(&url).await
     }
 
-    pub async fn search(&self, query: &str, limit: u32) -> Result<SearchResults> {
+    pub async fn search(&mut self, query: &str, limit: u32) -> Result<SearchResults> {
         let url = self.api_url(
             "search",
             &[
@@ -39,7 +39,7 @@ impl TidalClient {
     }
 
     pub async fn search_tracks(
-        &self,
+        &mut self,
         query: &str,
         limit: u32,
         offset: u32,
@@ -56,7 +56,7 @@ impl TidalClient {
     }
 
     pub async fn search_albums(
-        &self,
+        &mut self,
         query: &str,
         limit: u32,
         offset: u32,
@@ -73,7 +73,7 @@ impl TidalClient {
     }
 
     pub async fn search_artists(
-        &self,
+        &mut self,
         query: &str,
         limit: u32,
         offset: u32,
@@ -90,7 +90,7 @@ impl TidalClient {
     }
 
     pub async fn search_playlists(
-        &self,
+        &mut self,
         query: &str,
         limit: u32,
         offset: u32,
@@ -107,7 +107,7 @@ impl TidalClient {
     }
 
     pub async fn search_videos(
-        &self,
+        &mut self,
         query: &str,
         limit: u32,
         offset: u32,

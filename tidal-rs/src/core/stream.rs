@@ -52,7 +52,7 @@ pub type BoxedByteStream = Pin<Box<dyn Stream<Item = Result<Bytes>> + Send>>;
 
 impl TidalClient {
     pub async fn get_stream_info(
-        &self,
+        &mut self,
         track_id: u64,
         quality: AudioQuality,
     ) -> Result<StreamInfo> {
@@ -131,7 +131,7 @@ impl TidalClient {
     }
 
     pub async fn download_track(
-        &self,
+        &mut self,
         track_id: u64,
         quality: AudioQuality,
         output_path: &str,

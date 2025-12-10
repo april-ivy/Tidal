@@ -15,7 +15,7 @@ use crate::core::error::{
 };
 
 impl TidalClient {
-    pub async fn get_playback_info(&self, track_id: u64, quality: &str) -> Result<PlaybackInfo> {
+    pub async fn get_playback_info(&mut self, track_id: u64, quality: &str) -> Result<PlaybackInfo> {
         let url = self.listen_url(
             &format!("tracks/{}/playbackinfopostpaywall/v4", track_id),
             &[

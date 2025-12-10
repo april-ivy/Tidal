@@ -14,12 +14,12 @@ use super::models::{
 use crate::core::error::Result;
 
 impl TidalClient {
-    pub async fn get_album(&self, album_id: u64) -> Result<Album> {
+    pub async fn get_album(&mut self, album_id: u64) -> Result<Album> {
         let url = self.api_url(&format!("albums/{}", album_id), &[]);
         self.get(&url).await
     }
 
-    pub async fn get_albums(&self, album_ids: &[u64]) -> Result<Vec<Album>> {
+    pub async fn get_albums(&mut self, album_ids: &[u64]) -> Result<Vec<Album>> {
         if album_ids.is_empty() {
             return Ok(vec![]);
         }
@@ -39,7 +39,7 @@ impl TidalClient {
     }
 
     pub async fn get_album_tracks(
-        &self,
+        &mut self,
         album_id: u64,
         limit: u32,
         offset: u32,
@@ -54,7 +54,7 @@ impl TidalClient {
         self.get(&url).await
     }
 
-    pub async fn get_album_credits(&self, album_id: u64) -> Result<Vec<Credit>> {
+    pub async fn get_album_credits(&mut self, album_id: u64) -> Result<Vec<Credit>> {
         let url = self.api_url(&format!("albums/{}/credits", album_id), &[]);
         #[derive(Deserialize)]
         struct CreditsResponse {
@@ -65,7 +65,7 @@ impl TidalClient {
     }
 
     pub async fn get_album_items_credits(
-        &self,
+        &mut self,
         album_id: u64,
         limit: u32,
         offset: u32,
@@ -83,7 +83,7 @@ impl TidalClient {
     }
 
     pub async fn get_all_album_track_credits(
-        &self,
+        &mut self,
         album_id: u64,
     ) -> Result<Vec<TrackCredits>> {
         let mut all_credits = Vec::new();
@@ -103,12 +103,12 @@ impl TidalClient {
         Ok(all_credits)
     }
 
-    pub async fn get_album_review(&self, album_id: u64) -> Result<AlbumReview> {
+    pub async fn get_album_review(&mut self, album_id: u64) -> Result<AlbumReview> {
         let url = self.api_url(&format!("albums/{}/review", album_id), &[]);
         self.get(&url).await
     }
 
-    pub async fn get_similar_albums(&self, album_id: u64, limit: u32) -> Result<ItemsPage<Album>> {
+    pub async fn get_similar_albums(&mut self, album_id: u64, limit: u32) -> Result<ItemsPage<Album>> {
         let url = self.api_url(
             &format!("albums/{}/similar", album_id),
             &[("limit", &limit.to_string())],
@@ -116,7 +116,7 @@ impl TidalClient {
         self.get(&url).await
     }
 
-    pub async fn get_album_page(&self, album_id: u64) -> Result<AlbumPage> {
+    pub async fn get_album_page(&mut self, album_id: u64) -> Result<AlbumPage> {
         let url = self.pages_url(
             &format!("album?albumId={}", album_id),
             &[],
@@ -124,7 +124,7 @@ impl TidalClient {
         self.get(&url).await
     }
 
-    pub async fn get_album_full_info(&self, album_id: u64) -> Result<AlbumFullInfo> {
+    pub async fn get_album_full_info(&mut self, album_id: u64) -> Result<AlbumFullInfo> {
         let album = self.get_album(album_id).await?;
         let tracks = self.get_album_tracks(album_id, 100, 0).await?;
         let credits = self.get_album_credits(album_id).await.ok();
