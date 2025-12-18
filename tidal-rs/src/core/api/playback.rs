@@ -45,6 +45,14 @@ impl TidalClient {
     }
 }
 
+fn decode_xml_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+}
+
 pub fn parse_mpd(mpd_string: &str) -> Result<DashManifest> {
     let mut reader = Reader::from_str(mpd_string);
     let mut urls: Vec<String> = Vec::new();
@@ -54,10 +62,15 @@ pub fn parse_mpd(mpd_string: &str) -> Result<DashManifest> {
     let mut initialization_url: Option<String> = None;
     let mut media_template: Option<String> = None;
     let mut segment_durations: Vec<(u64, u32)> = Vec::new();
+    let mut base_url: Option<String> = None;
+    let mut in_base_url = false;
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => match e.name().as_ref() {
+                b"BaseURL" => {
+                    in_base_url = true;
+                }
                 b"AdaptationSet" => {
                     for attr in e.attributes().flatten() {
                         if attr.key.as_ref() == b"mimeType" {
@@ -79,12 +92,12 @@ pub fn parse_mpd(mpd_string: &str) -> Result<DashManifest> {
                     for attr in e.attributes().flatten() {
                         match attr.key.as_ref() {
                             b"initialization" => {
-                                initialization_url =
-                                    Some(String::from_utf8_lossy(&attr.value).to_string());
+                                let raw_url = String::from_utf8_lossy(&attr.value).to_string();
+                                initialization_url = Some(decode_xml_entities(&raw_url));
                             }
                             b"media" => {
-                                media_template =
-                                    Some(String::from_utf8_lossy(&attr.value).to_string());
+                                let raw_url = String::from_utf8_lossy(&attr.value).to_string();
+                                media_template = Some(decode_xml_entities(&raw_url));
                             }
                             _ => {}
                         }
@@ -111,26 +124,47 @@ pub fn parse_mpd(mpd_string: &str) -> Result<DashManifest> {
                 }
                 _ => {}
             },
-            Ok(Event::End(ref e)) => {
-                if e.name().as_ref() == b"SegmentTimeline" {
-                    in_segment_timeline = false;
+            Ok(Event::Text(ref e)) => {
+                if in_base_url {
+                    let text = String::from_utf8_lossy(e.as_ref()).trim().to_string();
+                    if !text.is_empty() {
+                        base_url = Some(decode_xml_entities(&text));
+                    }
                 }
             }
+            Ok(Event::End(ref e)) => match e.name().as_ref() {
+                b"SegmentTimeline" => in_segment_timeline = false,
+                b"BaseURL" => in_base_url = false,
+                _ => {}
+            },
             Ok(Event::Eof) => break,
             Err(e) => return Err(TidalError::Xml(e.to_string())),
             _ => {}
         }
     }
 
+    let base = base_url.unwrap_or_default();
+
     if let Some(init_url) = initialization_url {
-        urls.push(init_url);
+        let full_url = if init_url.starts_with("http") {
+            init_url
+        } else {
+            format!("{}{}", base, init_url)
+        };
+        urls.push(full_url);
     }
 
     if let Some(media) = media_template {
         let mut segment_number = 1u32;
         for (_duration, count) in segment_durations {
             for _ in 0..count {
-                urls.push(media.replace("$Number$", &segment_number.to_string()));
+                let segment_path = media.replace("$Number$", &segment_number.to_string());
+                let full_url = if segment_path.starts_with("http") {
+                    segment_path
+                } else {
+                    format!("{}{}", base, segment_path)
+                };
+                urls.push(full_url);
                 segment_number += 1;
             }
         }
